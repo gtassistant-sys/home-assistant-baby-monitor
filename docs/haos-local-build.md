@@ -3,7 +3,7 @@
 This fork publishes a controlled multi-architecture image for the Home Assistant App:
 
 ```text
-ghcr.io/gtassistant-sys/home-assistant-baby-monitor:0.4.0-local.6
+ghcr.io/gtassistant-sys/home-assistant-baby-monitor:0.4.0-local.7
 ```
 
 The GitHub Actions workflow builds from the repository root using `baby_monitor/Dockerfile` and publishes `linux/amd64` plus `linux/arm64`. The App manifest points to the fork GHCR image; Supervisor therefore pulls the published image instead of attempting to build with `baby_monitor/` as an isolated context.
