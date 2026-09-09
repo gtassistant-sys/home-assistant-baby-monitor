@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
+import os
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+import websockets
 
 SESSION_COOKIE = "baby_monitor_session"
 INGRESS_PEER = "172.30.32.2"
@@ -89,6 +93,60 @@ class AccessControlMiddleware:
                 return value
         return None
 
+    @classmethod
+    async def home_assistant_user_is_privileged(cls, headers: dict[bytes, bytes] | dict[str, str]) -> bool:
+        if cls.home_assistant_user_is_privileged_header(headers):
+            return True
+        normalized = {
+            (key.decode("latin-1") if isinstance(key, bytes) else key).lower(): (
+                value.decode("latin-1") if isinstance(value, bytes) else value
+            )
+            for key, value in headers.items()
+        }
+        user_id = normalized.get("x-remote-user-id") or normalized.get("x-hass-user-id")
+        supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+        if not user_id or not supervisor_token:
+            return False
+        try:
+            async with asyncio.timeout(3):
+                async with websockets.connect("ws://supervisor/core/websocket") as socket:
+                    await socket.recv()
+                    await socket.send(json.dumps({"type": "auth", "access_token": supervisor_token}))
+                    auth = json.loads(await socket.recv())
+                    if auth.get("type") != "auth_ok":
+                        return False
+                    await socket.send(json.dumps({"id": 1, "type": "config/auth/list"}))
+                    response = json.loads(await socket.recv())
+        except (OSError, TimeoutError, websockets.WebSocketException, json.JSONDecodeError):
+            return False
+        if response.get("type") != "result" or not response.get("success"):
+            return False
+        users = response.get("result")
+        if not isinstance(users, list):
+            return False
+        user = next((item for item in users if isinstance(item, dict) and item.get("id") == user_id), None)
+        if not user:
+            return False
+        groups = user.get("group_ids") if isinstance(user.get("group_ids"), list) else []
+        return bool(user.get("is_owner") or "system-admin" in groups)
+
+    @staticmethod
+    def home_assistant_user_is_privileged_header(headers: dict[bytes, bytes] | dict[str, str]) -> bool:
+        normalized = {
+            (key.decode("latin-1") if isinstance(key, bytes) else key).lower(): (
+                value.decode("latin-1") if isinstance(value, bytes) else value
+            )
+            for key, value in headers.items()
+        }
+
+        def flag(*names: str) -> bool:
+            value = next((normalized[name] for name in names if name in normalized), "")
+            return value.strip().lower() in {"1", "true", "yes"}
+
+        return flag("x-hass-is-admin", "x-home-assistant-is-admin", "x-remote-user-is-admin") or flag(
+            "x-hass-is-owner", "x-home-assistant-is-owner", "x-remote-user-is-owner"
+        )
+
     def _standalone_authorized(self, headers: dict[bytes, bytes]) -> bool:
         assert self.admin_token is not None
         candidates: list[str] = []
@@ -119,9 +177,8 @@ class AccessControlMiddleware:
             if peer != INGRESS_PEER:
                 await self._deny(send, 403, "request did not originate from Home Assistant ingress")
                 return
-            admin = headers.get(b"x-hass-is-admin") or headers.get(b"x-home-assistant-is-admin")
-            if admin is not None and admin.decode("ascii", "ignore").lower() not in {"1", "true", "yes"}:
-                await self._deny(send, 403, "Home Assistant administrator access is required")
+            if not await self.home_assistant_user_is_privileged(headers):
+                await self._deny(send, 403, "Home Assistant administrator or owner access is required")
                 return
             await self.app(scope, receive, send)
             return

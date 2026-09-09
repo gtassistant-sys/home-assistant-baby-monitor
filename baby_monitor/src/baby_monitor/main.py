@@ -585,9 +585,9 @@ def create_app(
     @app.post(f"{API_PREFIX}/frames/clear-all", status_code=200)
     async def clear_all_camera_moments(request: Request) -> dict[str, int]:
         if runtime == "home_assistant_app":
-            admin = request.headers.get("x-hass-is-admin") or request.headers.get("x-home-assistant-is-admin")
-            if admin is None or admin.lower() not in {"1", "true", "yes"}:
-                raise HTTPException(403, "Home Assistant administrator access is required")
+            headers = {key.lower(): value for key, value in request.headers.items()}
+            if not await AccessControlMiddleware.home_assistant_user_is_privileged(headers):
+                raise HTTPException(403, "Home Assistant administrator or owner access is required")
         history_transfer.ensure_writable()
         workers_were_started = bool(workers._tasks)
         if workers_were_started:
