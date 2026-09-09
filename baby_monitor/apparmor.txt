@@ -18,8 +18,11 @@ profile baby_monitor flags=(attach_disconnected,mediate_deleted) {
   /usr/local/bin/python* rix,
 
   /app/** r,
-  /data/ rw,
+  # HAOS bind-mounts the persistent App data directory at /data. Directory
+  # traversal and creation require x on directories; do not grant broad access.
+  /data/ rwx,
   /data/** rwk,
+  /data/**/ rwx,
   /tmp/ rw,
   /tmp/** rwk,
 
