@@ -872,6 +872,10 @@ export const api = {
     return normalizePage(result, ['items', 'frames'], normalizeFrame, limit, offset);
   },
 
+  async clearAllCameraMoments(): Promise<{ frames: number; bytes: number }> {
+    return request<{ frames: number; bytes: number }>('api/v1/frames/clear-all', { method: 'POST' });
+  },
+
   async getNearestFrames(at: string, limit = 5): Promise<FrameRecord[]> {
     const result = await request<unknown>(
       `api/v1/frames/nearest?at=${encodeURIComponent(at)}&limit=${limit}`,

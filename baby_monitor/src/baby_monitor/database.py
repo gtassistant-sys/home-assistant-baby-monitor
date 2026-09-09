@@ -387,6 +387,59 @@ class Database:
             )
         return {"frames": purged, "bytes": bytes_removed}
 
+    def clear_all_camera_moments(self) -> dict[str, int]:
+        """Atomically remove every frame row and its private image, without history."""
+        staging = self.frames_dir / ".clear-all-staging"
+        staged: list[tuple[Path, Path]] = []
+        frames_root = self.frames_dir.resolve()
+        with self._lock:
+            connection = self._connect()
+            try:
+                if staging.exists() or staging.is_symlink():
+                    raise StorageError("clear-all staging directory already exists")
+                staging.mkdir(mode=0o700)
+                rows = connection.execute("SELECT id, relative_path, size_bytes FROM frames").fetchall()
+                for row in rows:
+                    if not row["relative_path"]:
+                        continue
+                    source = (self.frames_dir / row["relative_path"]).resolve()
+                    if not source.is_relative_to(frames_root):
+                        raise StorageError("frame path escaped the private frame directory")
+                managed_files = [
+                    path
+                    for path in self.frames_dir.rglob("*")
+                    if path != staging and (path.is_symlink() or not path.is_dir())
+                ]
+                for source in managed_files:
+                    target = staging / source.relative_to(self.frames_dir)
+                    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    source.rename(target)
+                    staged.append((source, target))
+                connection.execute("BEGIN")
+                connection.execute("DELETE FROM frames")
+                for _, target in staged:
+                    target.unlink()
+                connection.commit()
+            except Exception as exc:
+                with suppress(sqlite3.Error):
+                    connection.rollback()
+                for source, target in reversed(staged):
+                    if target.exists():
+                        source.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        target.rename(source)
+                if isinstance(exc, StorageError):
+                    raise
+                raise StorageError(str(exc)) from exc
+            finally:
+                connection.close()
+                for directory in sorted(staging.rglob("*"), key=lambda path: len(path.parts), reverse=True):
+                    if directory.is_dir():
+                        with suppress(OSError):
+                            directory.rmdir()
+                with suppress(OSError):
+                    staging.rmdir()
+        return {"frames": len(rows), "bytes": sum(row["size_bytes"] for row in rows)}
+
     def add_sleep_event(
         self,
         event: SleepEventCreate,

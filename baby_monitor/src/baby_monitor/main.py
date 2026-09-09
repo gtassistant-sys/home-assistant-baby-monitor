@@ -582,6 +582,23 @@ def create_app(
         items, total = database.list_frames(limit, offset)
         return {"items": [_frame(item) for item in items], "limit": limit, "offset": offset, "total": total}
 
+    @app.post(f"{API_PREFIX}/frames/clear-all", status_code=200)
+    async def clear_all_camera_moments(request: Request) -> dict[str, int]:
+        if runtime == "home_assistant_app":
+            admin = request.headers.get("x-hass-is-admin") or request.headers.get("x-home-assistant-is-admin")
+            if admin is None or admin.lower() not in {"1", "true", "yes"}:
+                raise HTTPException(403, "Home Assistant administrator access is required")
+        history_transfer.ensure_writable()
+        workers_were_started = bool(workers._tasks)
+        if workers_were_started:
+            await workers.stop()
+        try:
+            return database.clear_all_camera_moments()
+        except StorageError as exc:
+            raise HTTPException(500, str(exc)) from exc
+        finally:
+            if workers_were_started and history_transfer.writable:
+                workers.start()
     @app.get(f"{API_PREFIX}/frames/range")
     async def frames_in_range(
         start: datetime,

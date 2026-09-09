@@ -414,6 +414,8 @@ export class BabyMonitorApp extends LitElement {
   @state() private tests: Partial<Record<TestKind, TestState>> = {};
   @state() private retentionEstimate: RetentionEstimate | null = null;
   @state() private retentionEstimateError = false;
+  @state() private clearMomentsOpen = false;
+  @state() private clearMomentsBusy = false;
   @state() private historyTransfer: HistoryTransferStatus | null = null;
   @state() private transferBusy: 'export' | 'import' | 'cancel' | 'retire' | '' = '';
   @state() private transferFile: File | null = null;
@@ -1565,6 +1567,20 @@ export class BabyMonitorApp extends LitElement {
       }
     } finally {
       this.sleepBusy = '';
+    }
+  }
+
+  private async clearAllCameraMoments(): Promise<void> {
+    this.clearMomentsBusy = true;
+    try {
+      await api.clearAllCameraMoments();
+      this.clearMomentsOpen = false;
+      await this.loadOperationalData(true);
+      this.showToast(this.t('cameraMomentsDeleted'));
+    } catch (error) {
+      this.inlineError = error instanceof Error ? error.message : this.t('cameraMomentsDeleteError');
+    } finally {
+      this.clearMomentsBusy = false;
     }
   }
 
@@ -3543,10 +3559,15 @@ export class BabyMonitorApp extends LitElement {
         <label class="field narrow-field"><span>${this.t('retentionDays')}</span><input type="number" min="1" max="3650" .value=${String(this.draft.retention.days ?? 30)} @input=${(event: Event) => { this.updateDraft((draft) => { draft.retention.days = Number(inputValue(event)); }); void this.estimateRetention(); }}></label>
         ${this.retentionEstimate ? html`<p class="retention-impact">${this.t('retentionImpact', { frames: this.retentionEstimate.frames, size: formatBytes(this.retentionEstimate.bytes, this.language) })}</p>` : this.retentionEstimateError ? html`<p class="field-error">${this.t('retentionEstimateError')}</p>` : nothing}
       ` : nothing}
+      <div class="destructive-block"><strong>${this.t('deleteCameraMoments')}</strong><p>${this.t('deleteCameraMomentsHint')}</p><button type="button" class="button danger" @click=${() => { this.clearMomentsOpen = true; }}>${this.t('deleteCameraMoments')}</button></div>
       <div class="safety-note">${icon('heart', 20)}<p>${this.t('notMedical')}</p></div>
       ${compact ? html`<label class="consent-box safety-confirm"><input type="checkbox" .checked=${this.safetyConfirmed} @change=${(event: Event) => { this.safetyConfirmed = inputChecked(event); this.inlineError = ''; }}><span><strong>${this.t('safetyConfirm')}</strong><small>${this.t('adminOnly')}</small></span></label>` : nothing}
     `;
-    return compact ? html`<div class="compact-section">${content}</div>` : this.renderSettingsCard('privacy', 'lock', 'settingsRetention', 'settingsRetentionHint', content);
+    const section = compact ? html`<div class="compact-section">${content}</div>` : this.renderSettingsCard('privacy', 'lock', 'settingsRetention', 'settingsRetentionHint', content);
+    return html`${section}${this.clearMomentsOpen ? html`
+      <section class="manual-dialog" role="dialog" aria-modal="true" aria-labelledby="clear-moments-title">
+        <div class="manual-dialog-card"><h2 id="clear-moments-title">${this.t('deleteCameraMoments')}</h2><p>${this.t('deleteCameraMomentsConfirm')}</p><div class="dialog-actions"><button type="button" class="button secondary" @click=${() => { this.clearMomentsOpen = false; }}>${this.t('cancel')}</button><button type="button" class="button danger" ?disabled=${this.clearMomentsBusy} @click=${() => this.clearAllCameraMoments()}>${this.clearMomentsBusy ? this.t('deletingCameraMoments') : this.t('deleteCameraMoments')}</button></div></div>
+      </section>` : nothing}`;
   }
 
   private renderHistoryTransferSection(): TemplateResult {

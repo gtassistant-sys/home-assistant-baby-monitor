@@ -32,12 +32,19 @@ interface SettingsHarness {
   renderProfileSection(compact?: boolean): TemplateResult;
   renderVisionSection(compact?: boolean): TemplateResult;
   renderHistoryTransferSection(): TemplateResult;
+  clearMomentsOpen: boolean;
+  clearMomentsBusy: boolean;
+  clearAllCameraMoments(): Promise<void>;
+  loadOperationalData(showSpinner?: boolean): Promise<void>;
+  renderRetentionSection(compact?: boolean): TemplateResult;
   homeAssistantValidationError(): string;
   validationError(stage: number | 'all'): string;
 }
 
 function harness(settings = cloneDefaultSettings()): SettingsHarness {
   const app = new BabyMonitorApp() as unknown as SettingsHarness;
+  app.clearMomentsOpen = false;
+  app.clearMomentsBusy = false;
   app.settings = structuredClone(settings);
   app.draft = structuredClone(settings);
   app.pendingSecretClears = [];
@@ -347,5 +354,34 @@ describe('settings safety interactions', () => {
     expect(document.body.textContent).toContain('safely retired');
     expect(document.body.textContent).toContain('Import a newer ZIP');
     expect(document.body.textContent).not.toContain('Prepare and download ZIP');
+  });
+
+  it('requires confirmation and refreshes operational data after deleting camera moments', async () => {
+    const app = harness();
+    const clear = vi.spyOn(api, 'clearAllCameraMoments').mockResolvedValue({ frames: 3, bytes: 120 });
+    const reload = vi.spyOn(app, 'loadOperationalData').mockResolvedValue();
+
+    renderSettings(app.renderRetentionSection(true));
+    buttonNamed('Delete all Camera Moments').click();
+    expect(app.clearMomentsOpen).toBe(true);
+
+    document.body.replaceChildren();
+    renderSettings(app.renderRetentionSection(true));
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    const cancel = dialog?.querySelector('.secondary');
+    if (!(cancel instanceof HTMLButtonElement)) throw new Error('Missing cancel button');
+    cancel.click();
+    expect(app.clearMomentsOpen).toBe(false);
+
+    app.clearMomentsOpen = true;
+    document.body.replaceChildren();
+    renderSettings(app.renderRetentionSection(true));
+    const confirm = document.querySelector('.manual-dialog .danger');
+    if (!(confirm instanceof HTMLButtonElement)) throw new Error('Missing confirm button');
+    confirm.click();
+    await vi.waitFor(() => expect(clear).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledWith(true));
+    expect(app.clearMomentsOpen).toBe(false);
   });
 });

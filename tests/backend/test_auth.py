@@ -81,3 +81,13 @@ async def test_ingress_rejects_synthetic_or_forwarded_peer(tmp_path: Path) -> No
     async with httpx.AsyncClient(transport=trusted, base_url="http://test") as client:
         assert (await client.get("/api/v1/settings", headers={"X-Hass-Is-Admin": "true"})).status_code == 200
         assert (await client.get("/api/v1/settings", headers={"X-Hass-Is-Admin": "false"})).status_code == 403
+
+async def test_clear_all_camera_moments_requires_home_assistant_admin(tmp_path: Path) -> None:
+    app = create_app(data_dir=tmp_path, runtime="home_assistant_app", start_workers=False)
+    transport = httpx.ASGITransport(app=app, client=("172.30.32.2", 1234))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        denied = await client.post("/api/v1/frames/clear-all", headers={"X-Hass-Is-Admin": "false"})
+        assert denied.status_code == 403
+        allowed = await client.post("/api/v1/frames/clear-all", headers={"X-Hass-Is-Admin": "true"})
+        assert allowed.status_code == 200
+        assert allowed.json() == {"frames": 0, "bytes": 0}
