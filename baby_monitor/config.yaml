@@ -1,5 +1,5 @@
 name: Baby Monitor
-version: "0.4.0-local.2"
+version: "0.4.0-local.3"
 slug: baby_monitor
 description: >-
   Local-first sleep tracking, cry alerts, camera snapshots, and optional AI
@@ -24,3 +24,4 @@ environment:
   BABY_MONITOR_RUNTIME: home_assistant_app
   BABY_MONITOR_DATA_DIR: /data
   BABY_MONITOR_FRONTEND_DIR: /app/frontend-dist
+image: ghcr.io/gtassistant-sys/home-assistant-baby-monitor
