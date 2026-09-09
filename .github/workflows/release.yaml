@@ -41,8 +41,8 @@ jobs:
         id: version
         run: |
           version="$(sed -n 's/^version: *"\([^"\]*\)"/\1/p' baby_monitor/config.yaml)"
-          if [[ "${version}" != "0.4.0-local.3" ]]; then
-            echo "Expected local image version 0.4.0-local.3, got ${version}" >&2
+          if [[ "${version}" != "0.4.0-local.4" ]]; then
+            echo "Expected local image version 0.4.0-local.4, got ${version}" >&2
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
@@ -80,19 +80,19 @@ jobs:
           arch: ${{ matrix.arch }}
           build-args: |
             BUILD_REVISION=${{ github.sha }}
-            BUILD_VERSION=0.4.0-local.3
+            BUILD_VERSION=0.4.0-local.4
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: .
           file: ./baby_monitor/Dockerfile
           image: ${{ matrix.image }}
-          image-tags: 0.4.0-local.3
+          image-tags: 0.4.0-local.4
           labels: |
             io.hass.type=app
             io.hass.name=Baby Monitor
             io.hass.description=Local-first baby monitor for Home Assistant
             io.hass.url=https://github.com/gtassistant-sys/home-assistant-baby-monitor
           push: "true"
-          version: 0.4.0-local.3
+          version: 0.4.0-local.4
 
       - name: Attest architecture image provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -119,12 +119,12 @@ jobs:
           architectures: ${{ env.ARCHITECTURES }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           image-name: ${{ env.IMAGE_NAME }}
-          image-tags: 0.4.0-local.3
+          image-tags: 0.4.0-local.4
           registry-prefix: ${{ env.REGISTRY_PREFIX }}
 
       - name: Verify published manifest
         env:
-          IMAGE: ${{ env.REGISTRY_PREFIX }}/${{ env.IMAGE_NAME }}:0.4.0-local.3
+          IMAGE: ${{ env.REGISTRY_PREFIX }}/${{ env.IMAGE_NAME }}:0.4.0-local.4
         run: |
           docker buildx imagetools inspect "${IMAGE}" | tee /tmp/manifest.txt
           grep -q 'linux/amd64' /tmp/manifest.txt
