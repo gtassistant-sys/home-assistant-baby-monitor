@@ -133,11 +133,8 @@ jobs:
           [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "Published digest: ${digest}" >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Make GHCR package public
+      - name: Verify GHCR package is public
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api --method PATCH \
-            "/user/packages/container/${IMAGE_NAME}" \
-            -f visibility=public
           test "$(gh api "/user/packages/container/${IMAGE_NAME}" --jq .visibility)" = public
