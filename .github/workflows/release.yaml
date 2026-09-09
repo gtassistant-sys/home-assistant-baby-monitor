@@ -1,21 +1,32 @@
 name: Publish multi-architecture image
 
 on:
-  release:
-    types:
-      - published
+  push:
+    branches:
+      - main
+    paths:
+      - baby_monitor/**
+      - frontend/**
+      - tools/**
+      - pyproject.toml
+      - uv.lock
+      - Dockerfile
+      - .github/workflows/release.yaml
+  workflow_dispatch:
 
 permissions:
   contents: read
+  packages: write
+  id-token: write
 
 env:
   ARCHITECTURES: '["amd64", "aarch64"]'
   IMAGE_NAME: home-assistant-baby-monitor
-  REGISTRY_PREFIX: ghcr.io/victoriano
+  REGISTRY_PREFIX: ghcr.io/gtassistant-sys
 
 jobs:
   prepare:
-    name: Prepare release
+    name: Prepare local build
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -26,25 +37,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify release version
+      - name: Read App version
         id: version
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="$(sed -n 's/^version: *"\([^"]*\)"/\1/p' baby_monitor/config.yaml)"
-          python_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
-          frontend_version="$(jq -r '.version' frontend/package.json)"
-          frontend_lock_version="$(jq -r '.packages[""].version' frontend/package-lock.json)"
-          if [[ -z "${version}" ]]; then
-            echo 'Could not read version from baby_monitor/config.yaml' >&2
-            exit 1
-          fi
-          if [[ "${RELEASE_TAG}" != "${version}" ]]; then
-            echo "Release tag ${RELEASE_TAG} must equal App version ${version}" >&2
-            exit 1
-          fi
-          if [[ "${python_version}" != "${version}" || "${frontend_version}" != "${version}" || "${frontend_lock_version}" != "${version}" ]]; then
-            echo "Release versions do not agree: App=${version}, Python=${python_version}, frontend=${frontend_version}, frontend lock=${frontend_lock_version}" >&2
+          version="$(sed -n 's/^version: *"\([^"\]*\)"/\1/p' baby_monitor/config.yaml)"
+          if [[ "${version}" != "0.4.0-local.3" ]]; then
+            echo "Expected local image version 0.4.0-local.3, got ${version}" >&2
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
@@ -82,20 +80,19 @@ jobs:
           arch: ${{ matrix.arch }}
           build-args: |
             BUILD_REVISION=${{ github.sha }}
+            BUILD_VERSION=0.4.0-local.3
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: .
           file: ./baby_monitor/Dockerfile
           image: ${{ matrix.image }}
-          image-tags: |
-            ${{ needs.prepare.outputs.version }}
-            latest
+          image-tags: 0.4.0-local.3
           labels: |
             io.hass.type=app
             io.hass.name=Baby Monitor
             io.hass.description=Local-first baby monitor for Home Assistant
-            io.hass.url=https://github.com/victoriano/home-assistant-baby-monitor
+            io.hass.url=https://github.com/gtassistant-sys/home-assistant-baby-monitor
           push: "true"
-          version: ${{ needs.prepare.outputs.version }}
+          version: 0.4.0-local.3
 
       - name: Attest architecture image provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -105,7 +102,7 @@ jobs:
           subject-name: ${{ matrix.image }}
 
   manifest:
-    name: Publish signed multi-architecture manifest
+    name: Publish multi-architecture manifest
     needs:
       - prepare
       - build
@@ -122,92 +119,25 @@ jobs:
           architectures: ${{ env.ARCHITECTURES }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           image-name: ${{ env.IMAGE_NAME }}
-          image-tags: |
-            ${{ needs.prepare.outputs.version }}
-            latest
+          image-tags: 0.4.0-local.3
           registry-prefix: ${{ env.REGISTRY_PREFIX }}
 
-      - name: Resolve multi-architecture manifest digest
-        id: image
+      - name: Verify published manifest
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE: ${{ env.REGISTRY_PREFIX }}/${{ env.IMAGE_NAME }}:0.4.0-local.3
         run: |
-          name="${REGISTRY_PREFIX}/${IMAGE_NAME}"
-          reference="${name}:${VERSION}"
-          digest="$(docker buildx imagetools inspect "${reference}" | awk '$1 == "Digest:" {print $2; exit}')"
-          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not resolve digest for ${reference}" >&2
-            exit 1
-          fi
-          echo "name=${name}" >> "${GITHUB_OUTPUT}"
-          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          docker buildx imagetools inspect "${IMAGE}" | tee /tmp/manifest.txt
+          grep -q 'linux/amd64' /tmp/manifest.txt
+          grep -q 'linux/arm64' /tmp/manifest.txt
+          digest="$(awk '$1 == "Digest:" {print $2; exit}' /tmp/manifest.txt)"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "Published digest: ${digest}" >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Attest multi-architecture image provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          push-to-registry: true
-          subject-digest: ${{ steps.image.outputs.digest }}
-          subject-name: ${{ steps.image.outputs.name }}
-
-  sbom:
-    name: Publish ${{ matrix.arch }} SBOM
-    needs:
-      - prepare
-      - manifest
-    runs-on: ${{ matrix.os }}
-    permissions:
-      attestations: write
-      contents: write
-      id-token: write
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    steps:
-      - name: Authenticate to GitHub Container Registry
+      - name: Make GHCR package public
         env:
-          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY_USERNAME: ${{ github.actor }}
-        run: echo "${REGISTRY_PASSWORD}" | docker login ghcr.io --username "${REGISTRY_USERNAME}" --password-stdin
-
-      - name: Resolve architecture image digest
-        id: image
-        env:
-          ARCH: ${{ matrix.arch }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          name="${REGISTRY_PREFIX}/${ARCH}-${IMAGE_NAME}"
-          reference="${name}:${VERSION}"
-          digest="$(docker buildx imagetools inspect "${reference}" | awk '$1 == "Digest:" {print $2; exit}')"
-          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not resolve digest for ${reference}" >&2
-            exit 1
-          fi
-          {
-            echo "name=${name}"
-            echo "reference=${reference}"
-            echo "digest=${digest}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Generate and attach SPDX SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          artifact-name: ${{ env.IMAGE_NAME }}-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.spdx.json
-          format: spdx-json
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          image: ${{ steps.image.outputs.reference }}
-          output-file: ${{ env.IMAGE_NAME }}-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.spdx.json
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          registry-username: ${{ github.actor }}
-          syft-version: v1.46.0
-          upload-artifact: "true"
-          upload-artifact-retention: 90
-          upload-release-assets: "true"
-
-      - name: Attest architecture SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
-        with:
-          push-to-registry: true
-          sbom-path: ${{ env.IMAGE_NAME }}-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.spdx.json
-          subject-digest: ${{ steps.image.outputs.digest }}
-          subject-name: ${{ steps.image.outputs.name }}
+          gh api --method PATCH \
+            "/user/packages/container/${IMAGE_NAME}" \
+            -f visibility=public
+          test "$(gh api "/user/packages/container/${IMAGE_NAME}" --jq .visibility)" = public
